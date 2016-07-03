@@ -1,4 +1,4 @@
-# Development Tools Package
+# Developer Tools Package
 
 [![build](https://travis-ci.org/jumale-go/dev.svg)](https://travis-ci.org/jumale-go/dev)
 
