@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
+	r "reflect"
 	"regexp"
 	"runtime"
 	"strings"
@@ -104,24 +104,24 @@ func SetWriter(w io.Writer) {
 
 // Dump a single value
 func dumpValue(val interface{}, level int) {
-	var refVal reflect.Value
-	valType := reflect.TypeOf(val)
+	var refVal r.Value
+	valType := r.TypeOf(val)
 
 	// if value is already a reflection (in case of recursive call)
 	// then cast itself and redefine the type
 	// otherwise - fetch a reflection
 	if valType.String() == "reflect.Value" {
-		refVal = val.(reflect.Value)
+		refVal = val.(r.Value)
 		valType = refVal.Type()
 	} else {
-		refVal = reflect.ValueOf(val)
+		refVal = r.ValueOf(val)
 	}
 	kind := valType.Kind()
 
 	// if the value is a pointer, then dereference it
 	// and mark result with ampersand
-	if kind == reflect.Ptr {
-		refVal = reflect.Indirect(refVal)
+	if kind == r.Ptr {
+		refVal = r.Indirect(refVal)
 		kind = refVal.Kind()
 		writeCF("%s", Config.Color.Punctuation, "&")
 	}
@@ -130,44 +130,43 @@ func dumpValue(val interface{}, level int) {
 	startTab := strings.Repeat(Config.Tab, level)
 	endTab := strings.Repeat(Config.Tab, level-1)
 
+	// Print number type if needed
+	if Config.NumTypes && isNumber(kind) {
+		writeType(refVal)
+	}
+
 	// Fetch real value based on its type and write it with a corresponding format
 	switch kind {
 
-	case reflect.String:
+	case r.String:
 		writeCF("\"%s\"", Config.Color.String, refVal.String())
 
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if Config.NumTypes {
-			writeType(refVal)
-		}
+	case r.Int, r.Int8, r.Int16, r.Int32, r.Int64:
 		writeCF("%d", Config.Color.Number, refVal.Int())
 
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if Config.NumTypes {
-			writeType(refVal)
-		}
+	case r.Uint, r.Uint8, r.Uint16, r.Uint32, r.Uint64:
 		writeCF("%d", Config.Color.Number, refVal.Uint())
 
-	case reflect.Float32, reflect.Float64:
-		if Config.NumTypes {
-			writeType(refVal)
-		}
+	case r.Float32, r.Float64:
 		writeCF("%v", Config.Color.Number, refVal.Float())
 
-	case reflect.Bool:
+	case r.Bool:
 		writeCF("%v", Config.Color.Bool, refVal.Bool())
 
-	case reflect.Array, reflect.Slice:
+	case r.Array, r.Slice:
 		writeType(refVal)
-		len := refVal.Len()
 
+		// Just show empty brace for empty value
+		len := refVal.Len()
 		if 0 == len {
 			writeCF("%s", Config.Color.Braces, "[]")
 			break
 		}
 
+		// Open brace
 		writeCF("%s", Config.Color.Braces, "[\n"+startTab)
 
+		// Print nested values
 		for i := 0; i < len; i++ {
 			dumpValue(refVal.Index(i), level+1)
 
@@ -178,17 +177,22 @@ func dumpValue(val interface{}, level int) {
 			writeCF("%s", Config.Color.Punctuation, end)
 		}
 
+		// Close brace
 		writeCF("%s", Config.Color.Braces, endTab+"]")
 
-	case reflect.Map:
+	case r.Map:
 		writeType(refVal)
+
+		// Just show empty brace for empty value
 		if 0 == len(refVal.MapKeys()) {
 			writeCF("%s", Config.Color.Braces, "{}")
 			break
 		}
 
+		// Open brace
 		writeCF("%s", Config.Color.Braces, "{\n"+startTab)
 
+		// Print nested key:value's
 		len := refVal.Len()
 		for _, key := range refVal.MapKeys() {
 			dumpValue(key, level+1)
@@ -202,17 +206,22 @@ func dumpValue(val interface{}, level int) {
 			writeCF("%s", Config.Color.Punctuation, end)
 		}
 
+		// Close brace
 		writeCF("%s", Config.Color.Braces, endTab+"}")
 
-	case reflect.Struct:
+	case r.Struct:
 		writeCF("%s", Config.Color.Type, pureType(valType.String()))
+
+		// Just show empty brace for empty value
 		if 0 == refVal.NumField() {
 			writeCF("%s", Config.Color.Braces, "{}")
 			break
 		}
 
+		// Open brance
 		writeCF("%s", Config.Color.Braces, "{\n"+startTab)
 
+		// Print nested fieldName:Value's
 		for i := 0; i < refVal.NumField(); i++ {
 			dumpValue(refVal.Type().Field(i).Name, level+1)
 			writeCF("%s", Config.Color.Punctuation, ": ")
@@ -225,12 +234,13 @@ func dumpValue(val interface{}, level int) {
 			writeCF("%s", Config.Color.Punctuation, end)
 		}
 
+		// Close brace
 		writeCF("%s", Config.Color.Braces, endTab+"}")
 
-	case reflect.Func:
+	case r.Func:
 		writeCF("%s", Config.Color.Func, valType.String())
 
-	case reflect.Interface:
+	case r.Interface:
 		dumpValue(refVal.Elem(), level)
 
 	default:
@@ -260,6 +270,21 @@ func writeCF(format string, color uint, val ...interface{}) {
 	writeF("\033[%dm%s", color, str)
 }
 
-func writeType(v reflect.Value) {
+func writeType(v r.Value) {
 	writeCF("%s", Config.Color.Type, "<"+pureType(v.Type().String())+">")
+}
+
+var numbers = [12]r.Kind{
+	r.Int, r.Int8, r.Int16, r.Int32, r.Int64,
+	r.Uint, r.Uint8, r.Uint16, r.Uint32, r.Uint64,
+	r.Float32, r.Float64,
+}
+
+func isNumber(kind r.Kind) bool {
+	for i := 0; i < len(numbers); i++ {
+		if kind == numbers[i] {
+			return true
+		}
+	}
+	return false
 }
