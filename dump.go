@@ -137,15 +137,21 @@ func dumpValue(val interface{}, level int) {
 		writeCF("\"%s\"", Config.Color.String, refVal.String())
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if Config.NumTypes { writeType(refVal) }
+		if Config.NumTypes {
+			writeType(refVal)
+		}
 		writeCF("%d", Config.Color.Number, refVal.Int())
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if Config.NumTypes { writeType(refVal) }
+		if Config.NumTypes {
+			writeType(refVal)
+		}
 		writeCF("%d", Config.Color.Number, refVal.Uint())
 
 	case reflect.Float32, reflect.Float64:
-		if Config.NumTypes { writeType(refVal) }
+		if Config.NumTypes {
+			writeType(refVal)
+		}
 		writeCF("%v", Config.Color.Number, refVal.Float())
 
 	case reflect.Bool:
