@@ -1,5 +1,7 @@
 # Development Tools Package
 
+![build](https://travis-ci.org/jumale-go/dev.svg)
+
 Installation `go get github.com/jumale-go/dev`
 
 ## Dump Tool
