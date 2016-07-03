@@ -82,10 +82,10 @@ var writer io.Writer = os.Stdout
 
 // Prints well-formatted and colorized variables
 func Dump(args ...interface{}) {
-	_, _, fileLine, _ := runtime.Caller(1)
+	_, fileName, fileLine, _ := runtime.Caller(1)
 
 	if Config.Location {
-		writeCF("%s:%d", Config.Color.Location, "/path/to/target/file.go", fileLine)
+		writeCF("%s:%d", Config.Color.Location, fileName, fileLine)
 		write("\n")
 	}
 
