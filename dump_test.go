@@ -2,6 +2,8 @@ package dev
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -60,7 +62,7 @@ var DumpCases = []struct {
 	{
 		&[2]int{7},
 		`
-(3)&(5)<[2]int>(4)[
+(5)<*[2]int>(4)[
 +(1)7(3),
 +(1)0(3),
 (4)]
@@ -143,10 +145,15 @@ var DumpCases = []struct {
 	},
 }
 
-func TestDump(t *testing.T) {
-	writer = wr
+func beforeTest() {
+	wr.result = ""
+	Config.Writer = wr
 	Config.Tab = "+"
 	Config.NumTypes = false
+}
+
+func TestDump(t *testing.T) {
+	beforeTest()
 
 	for _, cs := range DumpCases {
 		var err string
@@ -165,13 +172,65 @@ func TestDump(t *testing.T) {
 		if err != "" {
 			t.Error(fmt.Sprintf("%s\nResult:\n%s", err, wr.result))
 		}
+	}
+}
 
-		wr.result = ""
+type Holder struct {
+	Foo Formatted
+	Bar *Formatted
+	Baz Formatted  // tested as nil
+	Bat *Formatted // tested as nil
+}
+type Formatted struct {
+	name string
+}
+
+func (m *Formatted) Name() string {
+	return m.name
+}
+
+func TestFormatters(t *testing.T) {
+	beforeTest()
+
+	Config.Formatters["dev.Formatted"] = func(val interface{}) string {
+		var item *Formatted
+		if casted, ok := val.(Formatted); ok {
+			item = &casted
+		} else {
+			item = val.(*Formatted)
+		}
+		return item.Name()
+	}
+
+	input := Holder{
+		Foo: Formatted{"foo"},
+		Bar: &Formatted{"bar"},
+	}
+	Dump(input)
+
+	var err string
+	expected := colorize(`
+(5)Holder(4){
++(0)"Foo"(3): (5)<Formatted>(0)"foo"(3),
++(0)"Bar"(3): (5)<*Formatted>(0)"bar"(3),
++(0)"Baz"(3): (5)<Formatted>(0)""(3),
++(0)"Bat"(3): (5)<*Formatted>(5)<nil>(3),
+(4)}
+`)
+
+	if !strings.Contains(wr.result, expected) {
+		err = fmt.Sprintf("%v is not printed as %s", input, expected)
+	}
+
+	if err != "" {
+		err = fmt.Sprintf("%s\nResult:\n%s", err, wr.result)
+		ioutil.WriteFile("log/failed.log", []byte(err), os.ModePerm)
+		t.Error(err)
 	}
 }
 
 func benchmarkDump(val interface{}, b *testing.B) {
-	writer = wr
+	Config.Writer = wr
 	for i := 0; i < b.N; i++ {
 		Dump(val)
 	}

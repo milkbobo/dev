@@ -32,7 +32,12 @@ const (
 
 /*
 Main configuration:
-	Color - specifies corresponding colors for printed parts
+	Writer     - destination writer, interface of io.Writer, by default os.Stdout
+	Formatters - list of functions defined for specific types needed some custom format of output
+	Tab        - one tabulation character(s)
+	NumTypes   - if true, then each number is prefixed with it's own type
+	Location   - if true, then it prints file name and line number, where the Dump function is called
+	Color      - specifies corresponding colors for printed parts
 		String      - strings
 		Number      - all integers and floats
 		Bool        - booleans
@@ -40,11 +45,13 @@ Main configuration:
 		Braces      - round- curly- and square-braces
 		Type        - type prefixes before struct items and numbers (if this option is enabled)
 		Func        - function types
-	Tab - one tabulation character(s)
-	NumTypes - if true, then each number is prefixed with it's own type
-	Location - if true, then it prints file name and line number, where the Dump function is called
 */
 var Config config = config{
+	Writer:     os.Stdout,
+	Formatters: map[string]Formatter{},
+	Tab:        "  ",
+	NumTypes:   true,
+	Location:   true,
 	Color: colorConfig{
 		Location:    FgCyan,
 		String:      FgGreen,
@@ -55,9 +62,15 @@ var Config config = config{
 		Type:        FgWhite,
 		Func:        FgMagenta,
 	},
-	Tab:      "  ",
-	NumTypes: true,
-	Location: true,
+}
+
+type config struct {
+	Color      colorConfig
+	Tab        string
+	NumTypes   bool
+	Location   bool
+	Writer     io.Writer
+	Formatters map[string]Formatter
 }
 
 type colorConfig struct {
@@ -71,18 +84,13 @@ type colorConfig struct {
 	Func        uint
 }
 
-type config struct {
-	Color    colorConfig
-	Tab      string
-	NumTypes bool
-	Location bool
-}
-
-var writer io.Writer = os.Stdout
+type Formatter func(val interface{}) string
+type Any interface{}
 
 // Prints well-formatted and colorized variables
-func Dump(args ...interface{}) {
+func Dump(args ...Any) {
 	_, fileName, fileLine, _ := runtime.Caller(1)
+	fileName = strings.Replace(fileName, os.Getenv("GOPATH"), "", 1)
 
 	if Config.Location {
 		writeColor("%s:%d", Config.Color.Location, fileName, fileLine)
@@ -96,14 +104,8 @@ func Dump(args ...interface{}) {
 	writeFormat("\033[%dm", FgDefault)
 }
 
-// By default, result goes to os.Stdout,
-// but you can change the destination by this setter
-func SetWriter(w io.Writer) {
-	writer = w
-}
-
 // Dump a single value
-func dumpValue(val interface{}, level int) {
+func dumpValue(val Any, level int) {
 	var refVal r.Value
 	valType := r.TypeOf(val)
 
@@ -117,22 +119,41 @@ func dumpValue(val interface{}, level int) {
 		refVal = r.ValueOf(val)
 	}
 	kind := valType.Kind()
+	typeStr := valType.String()
+	isPointer := kind == r.Ptr
+
+	// Print nil value
+	switch kind {
+	case r.Chan, r.Func, r.Interface, r.Map, r.Ptr, r.Slice:
+		if refVal.IsNil() {
+			writeType(refVal, isPointer)
+			writeColor("%s", Config.Color.Type, "<nil>")
+			return
+		}
+	}
+
+	// Use formatter if is set for this type
+	if formatter, ok := Config.Formatters[typeName(typeStr)]; ok {
+		writeType(refVal, isPointer)
+		dumpValue(formatter(refVal.Interface()), level)
+		return
+	}
 
 	// if the value is a pointer, then dereference it
 	// and mark result with ampersand
-	if kind == r.Ptr {
+	if isPointer {
 		refVal = r.Indirect(refVal)
 		kind = refVal.Kind()
 		writeColor("%s", Config.Color.Punctuation, "&")
 	}
 
-	// Tabulations
+	// Calculate tabulations
 	startTab := strings.Repeat(Config.Tab, level)
 	endTab := strings.Repeat(Config.Tab, level-1)
 
 	// Print number type if needed
 	if Config.NumTypes && isNumber(kind) {
-		writeType(refVal)
+		writeType(refVal, isPointer)
 	}
 
 	// Fetch real value based on its type and write it with a corresponding format
@@ -154,7 +175,7 @@ func dumpValue(val interface{}, level int) {
 		writeColor("%v", Config.Color.Bool, refVal.Bool())
 
 	case r.Array, r.Slice:
-		writeType(refVal)
+		writeType(refVal, isPointer)
 
 		// Just show empty brace for empty value
 		len := refVal.Len()
@@ -181,7 +202,7 @@ func dumpValue(val interface{}, level int) {
 		writeColor("%s", Config.Color.Braces, endTab+"]")
 
 	case r.Map:
-		writeType(refVal)
+		writeType(refVal, isPointer)
 
 		// Just show empty brace for empty value
 		if 0 == len(refVal.MapKeys()) {
@@ -210,7 +231,7 @@ func dumpValue(val interface{}, level int) {
 		writeColor("%s", Config.Color.Braces, endTab+"}")
 
 	case r.Struct:
-		writeColor("%s", Config.Color.Type, pureType(valType.String()))
+		writeColor("%s", Config.Color.Type, pureType(typeStr))
 
 		// Just show empty brace for empty value
 		if 0 == refVal.NumField() {
@@ -218,7 +239,7 @@ func dumpValue(val interface{}, level int) {
 			break
 		}
 
-		// Open brance
+		// Open brace
 		writeColor("%s", Config.Color.Braces, "{\n"+startTab)
 
 		// Print nested fieldName:Value's
@@ -238,7 +259,7 @@ func dumpValue(val interface{}, level int) {
 		writeColor("%s", Config.Color.Braces, endTab+"}")
 
 	case r.Func:
-		writeColor("%s", Config.Color.Func, valType.String())
+		writeColor("%s", Config.Color.Func, typeStr)
 
 	case r.Interface:
 		dumpValue(refVal.Elem(), level)
@@ -249,31 +270,57 @@ func dumpValue(val interface{}, level int) {
 
 }
 
-// Leaves only last word in the type name
-// E.g. "package_name.Foo" => "Foo"
-// or "* Bar" => "Bar"
-func pureType(typeName string) string {
-	reg, _ := regexp.Compile(`\*?(\w+\.)+`)
-	return reg.ReplaceAllString(typeName, "")
+// Removes both namespaces and pointers
+func pureType(typeString string) string {
+	return typeName(withoutNamespace(typeString))
+}
+
+// Removes pointer mark in its own type
+// It will be replaced later with ampersand
+// Does not remove pointers in sub-types
+func typeName(typeString string) string {
+	reg, _ := regexp.Compile(`^\*`)
+	return reg.ReplaceAllString(typeString, "")
+}
+
+// Removes namespaces and returns pure name
+func withoutNamespace(typeString string) string {
+	reg, _ := regexp.Compile(`(\w+\.)+`)
+	return reg.ReplaceAllString(typeString, "")
 }
 
 func write(value string) {
-	writer.Write([]byte(value))
+	Config.Writer.Write([]byte(value))
 }
 
-func writeFormat(format string, val ...interface{}) {
-	write(fmt.Sprintf(format, val...))
+func writeFormat(format string, val ...Any) {
+	write(fmt.Sprintf(format, toInterface(val)...))
 }
 
-func writeColor(format string, color uint, val ...interface{}) {
-	str := fmt.Sprintf(format, val...)
+func writeColor(format string, color uint, val ...Any) {
+	str := fmt.Sprintf(format, toInterface(val)...)
 	writeFormat("\033[%dm%s", color, str)
 }
 
-func writeType(v r.Value) {
-	writeColor("%s", Config.Color.Type, "<"+pureType(v.Type().String())+">")
+func writeType(v r.Value, isPointer bool) {
+	ptr := ""
+	if isPointer {
+		ptr = "*"
+	}
+	writeColor("%s", Config.Color.Type, "<"+ptr+pureType(v.Type().String())+">")
 }
 
+// Converts []Any to []interface{}
+func toInterface(val []Any) []interface{} {
+	result := make([]interface{}, len(val))
+
+	for i := 0; i < len(val); i++ {
+		result[i] = val[i]
+	}
+	return result
+}
+
+// Checks if the value is any kind of number
 var numbers = [12]r.Kind{
 	r.Int, r.Int8, r.Int16, r.Int32, r.Int64,
 	r.Uint, r.Uint8, r.Uint16, r.Uint32, r.Uint64,
